@@ -19,3 +19,21 @@ def test_rejects_invalid_ean_check_digit():
         response = app.test_client().post("/etiqueta/nova", data={"name":"Inválida", "ean":"7891234567890", "paper_width":"60", "label_height":"40", "font_size":"24", "alignment":"center", "copies":"1", "feed_lines":"3"})
         assert response.status_code == 200
         assert "dígito verificador correto" in response.get_data(as_text=True)
+
+
+def test_print_queue_requires_agent_token_and_returns_job():
+    with tempfile.TemporaryDirectory() as folder:
+        app = create_app({"TESTING": True, "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:", "UPLOAD_FOLDER": folder, "PRINT_AGENT_TOKEN": "secret"})
+        client = app.test_client()
+        client.post("/etiqueta/nova", data={"name":"Fila", "product_name":"Café", "ean":"789123456789", "paper_width":"60", "label_height":"40", "font_size":"24", "alignment":"center", "copies":"2", "feed_lines":"3", "cut_paper":"on"})
+        client.post("/etiqueta/1/fila")
+
+        denied = client.get("/api/print-jobs/next")
+        assert denied.status_code == 401
+
+        response = client.get("/api/print-jobs/next", headers={"X-Print-Agent-Token": "secret"})
+        payload = response.get_json()
+        assert response.status_code == 200
+        assert payload["job"]["id"] == 1
+        assert payload["job"]["copies"] == 2
+        assert payload["job"]["data_base64"]

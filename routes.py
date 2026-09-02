@@ -1,8 +1,11 @@
 from pathlib import Path
+from base64 import b64encode
+from datetime import datetime, timezone
+from secrets import compare_digest
 from uuid import uuid4
-from flask import Blueprint, current_app, flash, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from werkzeug.utils import secure_filename
-from models import Label, db
+from models import Label, PrintJob, db
 from label_renderer import png_bytes, render_label
 from printer import escpos_raster, list_windows_printers, print_raw
 
@@ -25,6 +28,12 @@ def normalize_ean(value):
 
 def _boolean(name):
     return request.form.get(name) == "on"
+
+
+def _agent_authorized():
+    configured = current_app.config.get("PRINT_AGENT_TOKEN", "")
+    received = request.headers.get("X-Print-Agent-Token", "")
+    return bool(configured and received and compare_digest(configured, received))
 
 
 def _apply_form(label):
@@ -69,7 +78,10 @@ def editor(label_id=None):
         except (ValueError, TypeError) as error:
             db.session.rollback()
             flash(str(error), "danger")
-    return render_template("editor.html", label=label, printers=list_windows_printers())
+    jobs = []
+    if label.id:
+        jobs = PrintJob.query.filter_by(label_id=label.id).order_by(PrintJob.created_at.desc()).limit(5).all()
+    return render_template("editor.html", label=label, printers=list_windows_printers(), jobs=jobs)
 
 
 @bp.route("/etiqueta/<int:label_id>/preview.png")
@@ -92,6 +104,71 @@ def print_label(label_id):
     except Exception as error:
         flash(f"Falha ao imprimir: {error}", "danger")
     return redirect(url_for("main.editor", label_id=label.id))
+
+
+@bp.post("/etiqueta/<int:label_id>/fila")
+def enqueue_print(label_id):
+    label = db.get_or_404(Label, label_id)
+    job = PrintJob(
+        label=label,
+        copies=label.copies,
+        requested_by=request.remote_addr or "",
+        printer_name=request.form.get("printer_name", ""),
+    )
+    db.session.add(job)
+    db.session.commit()
+    flash("Etiqueta enviada para a fila do agente local.", "success")
+    return redirect(url_for("main.editor", label_id=label.id))
+
+
+@bp.get("/api/print-jobs/next")
+def next_print_job():
+    if not _agent_authorized():
+        abort(401)
+    job = PrintJob.query.filter_by(status="pending").order_by(PrintJob.created_at.asc()).first()
+    if not job:
+        return jsonify({"job": None})
+
+    try:
+        image = render_label(job.label, current_app.config["UPLOAD_FOLDER"])
+        data = escpos_raster(image, job.label.cut_paper, job.label.feed_lines)
+        job.status = "processing"
+        job.updated_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return jsonify(
+            {
+                "job": {
+                    "id": job.id,
+                    "label_id": job.label_id,
+                    "label_name": job.label.name,
+                    "copies": job.copies,
+                    "data_base64": b64encode(data).decode("ascii"),
+                }
+            }
+        )
+    except Exception as error:
+        job.status = "error"
+        job.error_message = str(error)
+        job.updated_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return jsonify({"error": str(error)}), 500
+
+
+@bp.post("/api/print-jobs/<int:job_id>/complete")
+def complete_print_job(job_id):
+    if not _agent_authorized():
+        abort(401)
+    job = db.get_or_404(PrintJob, job_id)
+    payload = request.get_json(silent=True) or {}
+    status = payload.get("status", "")
+    if status not in {"printed", "error"}:
+        return jsonify({"error": "Status inválido."}), 400
+    job.status = status
+    job.error_message = payload.get("error_message", "")[:2000]
+    job.printer_name = payload.get("printer_name", job.printer_name or "")[:255]
+    job.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 @bp.post("/etiqueta/<int:label_id>/excluir")

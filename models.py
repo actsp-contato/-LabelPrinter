@@ -21,3 +21,16 @@ class Label(db.Model):
     feed_lines = db.Column(db.Integer, default=3)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class PrintJob(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    label_id = db.Column(db.Integer, db.ForeignKey("label.id"), nullable=False)
+    label = db.relationship("Label", backref=db.backref("print_jobs", lazy=True))
+    status = db.Column(db.String(20), default="pending", nullable=False)
+    requested_by = db.Column(db.String(120), default="")
+    printer_name = db.Column(db.String(255), default="")
+    copies = db.Column(db.Integer, default=1)
+    error_message = db.Column(db.Text, default="")
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
