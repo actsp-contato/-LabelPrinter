@@ -1,0 +1,6 @@
+{% extends 'base.html' %}{% block content %}
+<div class="page-heading d-flex justify-content-between align-items-start gap-3 mb-4"><div><h1>Minhas etiquetas</h1><p class="text-secondary mb-0">Crie, revise e imprima modelos na Elgin i9.</p></div><a class="btn btn-warning" href="{{ url_for('main.editor') }}">+ Nova etiqueta</a></div>
+<div class="row g-3">
+{% for label in labels %}<div class="col-12 col-md-6 col-lg-4"><div class="card h-100 shadow-sm"><img class="card-img-top label-thumb" src="{{ url_for('main.preview', label_id=label.id) }}" alt="Prévia de {{ label.name }}"><div class="card-body"><h5>{{ label.name }}</h5><p class="mb-1">{{ label.product_name or 'Sem produto informado' }}</p><p class="text-secondary">{{ label.paper_width }} × {{ label.label_height }} mm · EAN {{ label.ean or 'não informado' }}</p><a class="btn btn-dark w-100" href="{{ url_for('main.editor', label_id=label.id) }}">Editar / imprimir</a></div></div></div>
+{% else %}<div class="col-12"><div class="empty">Nenhuma etiqueta salva. Crie o primeiro modelo.</div></div>{% endfor %}
+</div>{% endblock %}
